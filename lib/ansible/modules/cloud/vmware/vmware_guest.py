@@ -1322,10 +1322,14 @@ class PyVmomiHelper(PyVmomi):
                     if not isinstance(nic.device, device_class):
                         self.module.fail_json(msg="Changing the device type is not possible when interface is already present. "
                                                   "The failing device type is %s" % network_devices[key]['device_type'])
-                # Changing mac address has no effect when editing interface
-                if 'mac' in network_devices[key] and nic.device.macAddress != current_net_devices[key].macAddress:
-                    self.module.fail_json(msg="Changing MAC address has not effect when interface is already present. "
-                                              "The failing new MAC address is %s" % nic.device.macAddress)
+                if 'mac' in network_devices[key] and nic.device.macAddress != network_devices[key]['mac']:
+                    if not PyVmomiDeviceHelper.is_valid_mac_addr(network_devices[key]['mac']):
+                        self.module.fail_json(msg="Device MAC address '%s' is invalid."
+                                                  " Please provide correct MAC address." % network_devices[key]['mac'])
+
+                    nic.device.addressType = 'manual'
+                    nic.device.macAddress = network_devices[key]['mac']
+                    nic_change_detected = True
 
             else:
                 # Default device type is vmxnet3, VMWare best practice
