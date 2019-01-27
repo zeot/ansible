@@ -570,6 +570,7 @@ except ImportError:
     pass
 
 from random import randint
+from distutils.version import StrictVersion
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils._text import to_text, to_native
 from ansible.module_utils.vmware import (find_obj, gather_vm_facts, get_all_objs,
@@ -834,6 +835,7 @@ class PyVmomiHelper(PyVmomi):
         self.change_detected = False
         self.customspec = None
         self.cache = PyVmomiCache(self.content, dc_name=self.params['datacenter'])
+        self.vcenter_version = StrictVersion(self.content.about.version)
 
     def gather_facts(self, vm):
         return gather_vm_facts(self.content, vm)
@@ -1276,7 +1278,7 @@ class PyVmomiHelper(PyVmomi):
 
         return network_devices
 
-    def configure_network(self, vm_obj):
+    def configure_network(self, vm_obj, relospec=None):
         # Ignore empty networks, this permits to keep networks when deploying a template/cloning a VM
         if len(self.params['networks']) == 0:
             return
@@ -1404,7 +1406,10 @@ class PyVmomiHelper(PyVmomi):
                     nic_change_detected = True
 
             if nic_change_detected:
-                self.configspec.deviceChange.append(nic)
+                if relospec and self.vcenter_version >= StrictVersion("6.0"):
+                    relospec.deviceChange.append(nic)
+                else:
+                    self.configspec.deviceChange.append(nic)
                 self.change_detected = True
 
     def configure_vapp_properties(self, vm_obj):
@@ -2091,6 +2096,10 @@ class PyVmomiHelper(PyVmomi):
         else:
             (datastore, datastore_name) = self.select_datastore(vm_obj)
 
+        relospec = None
+        if self.params['template']:
+            relospec = vim.vm.RelocateSpec()
+
         self.configspec = vim.vm.ConfigSpec()
         self.configspec.deviceChange = []
         self.configure_guestid(vm_obj=vm_obj, vm_creation=True)
@@ -2098,7 +2107,7 @@ class PyVmomiHelper(PyVmomi):
         self.configure_hardware_params(vm_obj=vm_obj)
         self.configure_resource_alloc_info(vm_obj=vm_obj)
         self.configure_disks(vm_obj=vm_obj)
-        self.configure_network(vm_obj=vm_obj)
+        self.configure_network(vm_obj=vm_obj, relospec=relospec)
         self.configure_cdrom(vm_obj=vm_obj)
 
         # Find if we need network customizations (find keys in dictionary that requires customizations)
@@ -2117,9 +2126,6 @@ class PyVmomiHelper(PyVmomi):
         clone_method = None
         try:
             if self.params['template']:
-                # create the relocation spec
-                relospec = vim.vm.RelocateSpec()
-
                 # Only select specific host when ESXi hostname is provided
                 if self.params['esxi_hostname']:
                     relospec.host = self.select_host()
